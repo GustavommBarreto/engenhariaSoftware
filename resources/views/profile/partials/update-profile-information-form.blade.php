@@ -25,7 +25,20 @@
 
         <div>
             <x-input-label for="email" :value="__('Email')" />
-            <x-text-input id="email" name="email" type="email" class="mt-1 block w-full" :value="old('email', $user->email)" required autocomplete="username" />
+
+            <x-text-input
+                id="email"
+                name="email"
+                type="email"
+                class="mt-1 block w-full bg-transparent border-1 p-2 text-gray-400 italic focus:outline-none cursor-not-allowed"
+                :value="old('email', $user->email)"
+                required
+                autocomplete="username"
+                disabled
+                aria-disabled="true"
+                tabindex="-1"
+            />
+
             <x-input-error class="mt-2" :messages="$errors->get('email')" />
 
             @if ($user instanceof \Illuminate\Contracts\Auth\MustVerifyEmail && ! $user->hasVerifiedEmail())

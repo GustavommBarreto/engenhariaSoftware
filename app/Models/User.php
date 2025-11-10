@@ -45,4 +45,23 @@ class User extends Authenticatable
             'password' => 'hashed',
         ];
     }
-}
+
+    public function ownedProjects()
+    {
+        return $this->hasMany(\App\Models\Project::class, 'owner_id');
+    }
+
+    public function projects()
+    {
+        return $this->belongsToMany(\App\Models\Project::class)
+                    ->withPivot('role')
+                    ->withTimestamps();
+    }
+
+    /** Papel do usuário em um projeto específico (helper) */
+    public function roleIn(Project $project): ?string
+    {
+        $p = $this->projects()->where('project_id', $project->id)->first();
+        return $p?->pivot?->role;
+    }
+    }

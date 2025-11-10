@@ -44,4 +44,19 @@
             </x-primary-button>
         </div>
     </form>
+
+    <!-- Divider -->
+    <div class="flex items-center my-6">
+        <div class="flex-grow h-px bg-gray-300"></div>
+        <span class="mx-2 text-sm text-gray-500">ou</span>
+        <div class="flex-grow h-px bg-gray-300"></div>
+    </div>
+
+    <!-- Botão de Registro -->
+    <div class="text-center">
+        <a href="{{ route('register') }}"
+            class="inline-flex items-center px-4 py-2 bg-gray-100 hover:bg-gray-200 border border-gray-300 text-gray-800 text-sm font-medium rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+            {{ __('Registrar nova conta') }}
+        </a>
+    </div>
 </x-guest-layout>

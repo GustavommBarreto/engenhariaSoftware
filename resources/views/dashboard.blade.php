@@ -1,3 +1,21 @@
+@php /** @var \Illuminate\Support\Collection|\App\Models\Project[] $projects */ @endphp
+
+@if(session('success'))
+    <div class="mb-4 rounded-lg bg-green-50 text-green-800 px-4 py-2">
+        {{ session('success') }}
+    </div>
+@endif
+
+@if($errors->any())
+    <div class="mb-4 rounded-lg bg-red-50 text-red-800 px-4 py-2">
+        <ul class="list-disc ms-6">
+            @foreach($errors->all() as $e)
+                <li>{{ $e }}</li>
+            @endforeach
+        </ul>
+    </div>
+@endif
+
 <x-app-layout>
     <x-slot name="header">
         <div class="flex items-center justify-between">
@@ -23,7 +41,6 @@
             <!-- 1) Estado atual: SEM projetos -->
             <section class="bg-white shadow-sm sm:rounded-lg p-6">
                 <h3 class="text-lg font-semibold text-gray-900">Seus projetos</h3>
-                <p class="text-sm text-gray-500">Estado real do sistema (sem dados no banco).</p>
 
                 @php
                     /** Ex.: na vida real virá do controller: $projects = Project::where('user_id', auth()->id())->get(); */
@@ -67,50 +84,15 @@
                                     @endif
                                 </dl>
                                 <div class="mt-4 flex gap-2">
-                                    <a href="#" class="text-blue-600 hover:underline text-sm">Abrir</a>
-                                    <a href="#" class="text-gray-600 hover:underline text-sm">Editar</a>
+                                    <a href="{{ route('projects.show', $p) }}" class="text-blue-600 hover:underline text-sm">Detalhes</a>
+                                    @if(auth()->id() === $p->owner_id)
+                                        <a href="{{ route('projects.edit', $p) }}" class="text-gray-600 hover:underline text-sm">Editar</a>
+                                    @endif
                                 </div>
                             </article>
                         @endforeach
                     </div>
                 @endif
-            </section>
-
-            <!-- 2) PRÉ-VISUALIZAÇÃO: como ficaria COM 1 projeto -->
-            <section class="bg-white shadow-sm sm:rounded-lg p-6">
-                <h3 class="text-lg font-semibold text-gray-900">Pré-visualização (exemplo com 1 projeto)</h3>
-                @php
-                    $exemplo = (object) [
-                        'nome' => 'Sistema de Acompanhamento Orçamentário',
-                        'descricao' => 'Dashboard e workflow para demandas orçamentárias (NUP, fluxo de processamento, validações, relatórios gerenciais).',
-                        'status' => 'Ativo',
-                        'inicio' => now()->subDays(15),
-                        'fim' => null,
-                    ];
-                @endphp
-                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 mt-4">
-                    <article class="border rounded-xl p-5 bg-white shadow-sm">
-                        <div class="flex items-start justify-between">
-                            <h4 class="font-semibold text-gray-900">{{ $exemplo->nome }}</h4>
-                            <span class="text-xs px-2 py-1 rounded-full bg-green-100 text-green-700">
-                                {{ $exemplo->status }}
-                            </span>
-                        </div>
-                        <p class="text-sm text-gray-600 mt-2">{{ $exemplo->descricao }}</p>
-                        <dl class="mt-4 text-xs text-gray-500 space-y-1">
-                            <div class="flex justify-between">
-                                <dt>Início</dt><dd>{{ \Carbon\Carbon::parse($exemplo->inicio)->format('d/m/Y') }}</dd>
-                            </div>
-                            <div class="flex justify-between">
-                                <dt>Fim</dt><dd>—</dd>
-                            </div>
-                        </dl>
-                        <div class="mt-4 flex gap-2">
-                            <button class="text-blue-600 hover:underline text-sm" type="button">Abrir</button>
-                            <button class="text-gray-600 hover:underline text-sm" type="button">Editar</button>
-                        </div>
-                    </article>
-                </div>
             </section>
         </div>
 
