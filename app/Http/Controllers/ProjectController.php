@@ -57,13 +57,67 @@ class ProjectController extends Controller
         return back()->with('success', 'Projeto removido.');
     }
 
-    public function show(Project $project)
+   public function show(Project $project)
     {
-        // opcional: autorize se o usuário é membro
         $this->authorizeView($project);
 
-        $project->load(['owner','members']);
-        return view('projects.show', compact('project'));
+        // Carrega o projeto e as tarefas, garantindo que o Assignee esteja carregado nas tarefas
+        $project->load([
+            'owner',
+            'members',
+            'tasks' => function($q) {
+                // Ordenamos as tarefas pelo campo 'priority' (DESC) e 'due_date' (ASC) para exibir
+                // as mais importantes/urgentes primeiro em cada coluna do Kanban.
+                $q->orderBy('priority', 'desc')->orderBy('due_date', 'asc')->with('assignee');
+            }
+        ]);
+
+        // --- Geração de KPIs ---
+        
+        $total      = $project->tasks->count();
+        $done       = $project->tasks->where('status','DONE')->count();
+        $open       = $project->tasks->where('status','OPEN')->count();
+        $inprogress = $project->tasks->where('status','IN_PROGRESS')->count();
+        $blocked    = $project->tasks->where('status','BLOCKED')->count();
+
+        $today = now()->startOfDay();
+        $overdue = $project->tasks
+            ->filter(fn($t) => $t->due_date && $t->due_date->lt($today) && $t->status !== 'DONE')
+            ->count();
+
+        $nextDue = $project->tasks
+            ->filter(fn($t) => $t->due_date && $t->due_date->gte($today) && $t->status !== 'DONE')
+            ->sortBy('due_date')
+            ->first();
+
+        $progress = $total > 0 ? round(($done / $total) * 100) : 0;
+
+        // --- NOVO: Agrupamento de tarefas para o Quadro Kanban (Substitui $quickList) ---
+        
+        // Agrupa todas as tarefas do projeto pelo status.
+        $tasksByStatus = $project->tasks->groupBy('status');
+        
+        // Garante que as chaves para as colunas do Kanban existam, mesmo que vazias
+        // Isso evita erros no Blade ao tentar acessar $tasksByStatus['OPEN'], por exemplo.
+        $allStatuses = collect(['OPEN', 'IN_PROGRESS', 'BLOCKED', 'DONE', 'OTHER_STATUS_IF_YOU_HAVE_IT']); // Adicione outros status se necessário
+        
+        $tasksByStatus = $allStatuses
+            ->mapWithKeys(fn ($status) => [$status => $tasksByStatus->get($status) ?? collect()])
+            ->all();
+        
+        // --- Outras variáveis ---
+
+        $userRole = auth()->user()->id === $project->owner_id
+            ? 'OWNER'
+            : ($project->members->firstWhere('id', auth()->id())?->pivot?->role ?? '—');
+
+        return view('projects.show', compact(
+            'project',
+            'total','done','open','inprogress','blocked','overdue','nextDue','progress',
+            'userRole',
+            // Essa variável alimenta o seu novo Quadro Kanban
+            'tasksByStatus' 
+        ));
     }
 
     public function edit(Project $project)

@@ -34,4 +34,9 @@ class Project extends Model
                     ->withPivot('role')
                     ->withTimestamps();
     }
+
+    public function tasks()
+    {
+        return $this->hasMany(\App\Models\Task::class);
+    }
 }
