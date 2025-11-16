@@ -213,3 +213,5 @@
 
     </div>
 </x-app-layout>
+export PATH="/usr/bin:$PATH"
+hash -r
