@@ -4,6 +4,9 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\TaskController;
+use App\Http\Controllers\UserStoryController;
+use App\Http\Controllers\SprintController;
+
 /*
 |--------------------------------------------------------------------------
 | Web Routes
@@ -24,7 +27,8 @@ Route::middleware(['auth'])->group(function () {
 
     Route::get('/dashboard', [ProjectController::class, 'index'])
         ->name('dashboard');
-
+    Route::get('/projects', [ProjectController::class, 'index'])
+    ->name('projects.index');
     /*
     |--------------------------------------------------
     | Perfil (rotas padrão Breeze)
@@ -45,11 +49,17 @@ Route::middleware(['auth'])->group(function () {
     Route::put('/projects/{project}', [ProjectController::class, 'update'])->name('projects.update');
     Route::delete('/projects/{project}', [ProjectController::class, 'destroy'])->name('projects.destroy');
 
+    /*
+    |--------------------------------------------------
+    | Tasks (já existentes no projeto)
+    |--------------------------------------------------
+    */
     Route::post('/projects/{project}/tasks', [TaskController::class, 'store'])
         ->name('projects.tasks.store');
 
     Route::get('/tasks/{task}', [TaskController::class, 'show'])
         ->name('tasks.show');
+
     Route::patch('/tasks/{task}/status', [TaskController::class, 'updateStatus'])
         ->name('tasks.updateStatus');
 
@@ -58,9 +68,40 @@ Route::middleware(['auth'])->group(function () {
     | Membros de projeto (adicionar / atualizar / remover)
     |--------------------------------------------------
     */
-    Route::post('/projects/{project}/members', [ProjectController::class, 'membersStore'])->name('projects.members.store');
-    Route::put('/projects/{project}/members/{user}', [ProjectController::class, 'membersUpdate'])->name('projects.members.update');
-    Route::delete('/projects/{project}/members/{user}', [ProjectController::class, 'membersDestroy'])->name('projects.members.destroy');
+    Route::post('/projects/{project}/members', [ProjectController::class, 'membersStore'])
+        ->name('projects.members.store');
+
+    Route::put('/projects/{project}/members/{user}', [ProjectController::class, 'membersUpdate'])
+        ->name('projects.members.update');
+
+    Route::delete('/projects/{project}/members/{user}', [ProjectController::class, 'membersDestroy'])
+        ->name('projects.members.destroy');
+
+    /*
+    |--------------------------------------------------
+    | Product Backlog (Histórias de Usuário) e Sprints
+    |  - /projects/{project}/stories   -> backlog do produto
+    |  - /projects/{project}/sprints   -> sprints + plano de sprint
+    |--------------------------------------------------
+    */
+    Route::prefix('projects/{project}')->group(function () {
+
+        // Histórias de usuário (product backlog)
+        Route::resource('stories', UserStoryController::class)
+            ->parameters(['stories' => 'story'])
+            ->names('projects.stories');
+
+        // Sprints + plano de sprint
+        Route::resource('sprints', SprintController::class)
+            ->names('projects.sprints');
+
+        // Sprint backlog: adicionar / remover histórias da sprint
+        Route::post('sprints/{sprint}/stories/{story}', [SprintController::class, 'addStory'])
+            ->name('projects.sprints.stories.add');
+
+        Route::delete('sprints/{sprint}/stories/{story}', [SprintController::class, 'removeStory'])
+            ->name('projects.sprints.stories.remove');
+    });
 });
 
 /*

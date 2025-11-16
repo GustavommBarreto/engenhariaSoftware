@@ -5,9 +5,9 @@ namespace App\Http\Controllers;
 use App\Enums\ProjectRole;
 use App\Http\Requests\StoreProjectRequest;
 use App\Models\Project;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
-use App\Models\User;
 
 class ProjectController extends Controller
 {
@@ -47,33 +47,31 @@ class ProjectController extends Controller
             ->with('success', 'Projeto criado com sucesso!');
     }
 
-    /** (Opcional) excluir */
+    /** Excluir projeto */
     public function destroy(Project $project, Request $request)
     {
-        // simples: só o dono pode apagar
+        // só o dono pode apagar
         abort_unless($project->owner_id === $request->user()->id, 403);
         $project->delete();
 
         return back()->with('success', 'Projeto removido.');
     }
 
-   public function show(Project $project)
+    /** Detalhes do projeto (dashboard do projeto) */
+    public function show(Project $project)
     {
         $this->authorizeView($project);
 
-        // Carrega o projeto e as tarefas, garantindo que o Assignee esteja carregado nas tarefas
         $project->load([
             'owner',
             'members',
             'tasks' => function($q) {
-                // Ordenamos as tarefas pelo campo 'priority' (DESC) e 'due_date' (ASC) para exibir
-                // as mais importantes/urgentes primeiro em cada coluna do Kanban.
-                $q->orderBy('priority', 'desc')->orderBy('due_date', 'asc')->with('assignee');
+                $q->orderBy('priority', 'desc')
+                  ->orderBy('due_date', 'asc')
+                  ->with('assignee');
             }
         ]);
 
-        // --- Geração de KPIs ---
-        
         $total      = $project->tasks->count();
         $done       = $project->tasks->where('status','DONE')->count();
         $open       = $project->tasks->where('status','OPEN')->count();
@@ -92,20 +90,12 @@ class ProjectController extends Controller
 
         $progress = $total > 0 ? round(($done / $total) * 100) : 0;
 
-        // --- NOVO: Agrupamento de tarefas para o Quadro Kanban (Substitui $quickList) ---
-        
-        // Agrupa todas as tarefas do projeto pelo status.
+        // Quadro Kanban
         $tasksByStatus = $project->tasks->groupBy('status');
-        
-        // Garante que as chaves para as colunas do Kanban existam, mesmo que vazias
-        // Isso evita erros no Blade ao tentar acessar $tasksByStatus['OPEN'], por exemplo.
-        $allStatuses = collect(['OPEN', 'IN_PROGRESS', 'BLOCKED', 'DONE', 'OTHER_STATUS_IF_YOU_HAVE_IT']); // Adicione outros status se necessário
-        
+        $allStatuses = collect(['OPEN', 'IN_PROGRESS', 'BLOCKED', 'DONE']);
         $tasksByStatus = $allStatuses
             ->mapWithKeys(fn ($status) => [$status => $tasksByStatus->get($status) ?? collect()])
             ->all();
-        
-        // --- Outras variáveis ---
 
         $userRole = auth()->user()->id === $project->owner_id
             ? 'OWNER'
@@ -115,18 +105,24 @@ class ProjectController extends Controller
             'project',
             'total','done','open','inprogress','blocked','overdue','nextDue','progress',
             'userRole',
-            // Essa variável alimenta o seu novo Quadro Kanban
-            'tasksByStatus' 
+            'tasksByStatus'
         ));
     }
 
+    /** Tela de edição / configuração do projeto */
     public function edit(Project $project)
     {
         $this->authorizeUpdate($project);
 
-        return view('projects.edit', compact('project'));
+        $project->load('members');
+
+        return view('projects.edit', [
+            'project'  => $project,
+            'members'  => $project->members,
+        ]);
     }
 
+    /** Salvar alterações básicas do projeto */
     public function update(Request $request, Project $project)
     {
         $this->authorizeUpdate($project);
@@ -147,7 +143,7 @@ class ProjectController extends Controller
 
     /* ======== MEMBERS ======== */
 
-    // Adiciona membro por e-mail e papel
+    /** Adicionar membro por e-mail e papel */
     public function membersStore(Request $request, Project $project)
     {
         $this->authorizeUpdate($project);
@@ -156,69 +152,72 @@ class ProjectController extends Controller
 
         $data = $request->validate([
             'email' => ['required','email','exists:users,email'],
-            'role'  => ['required', \Illuminate\Validation\Rule::in(['PRODUCT_OWNER','SCRUM_MASTER','DEVELOPER'])],
+            'role'  => ['required', Rule::in(['PRODUCT_OWNER','SCRUM_MASTER','DEVELOPER'])],
         ], [
             'email.exists' => 'Este e-mail não está cadastrado no sistema.',
         ]);
 
-        $user = \App\Models\User::whereRaw('LOWER(email) = ?', [$email])->firstOrFail();
+        $user = User::whereRaw('LOWER(email) = ?', [$email])->firstOrFail();
 
         if ($user->id === $project->owner_id) {
-            return redirect()->route('projects.show', $project)
+            return redirect()->route('projects.edit', $project)
                 ->with('error', 'O dono já está no projeto como OWNER.');
         }
 
         if ($project->members()->where('user_id', $user->id)->exists()) {
-            return redirect()->route('projects.show', $project)
+            return redirect()->route('projects.edit', $project)
                 ->with('error', 'Usuário já é membro deste projeto.');
         }
 
         $project->members()->attach($user->id, ['role' => $data['role']]);
 
-        return redirect()->route('projects.show', $project)
+        return redirect()->route('projects.edit', $project)
             ->with('success', 'Membro adicionado.');
     }
 
+    /** Atualizar papel de um membro */
     public function membersUpdate(Request $request, Project $project, User $user)
     {
         $this->authorizeUpdate($project);
 
         $data = $request->validate([
-            'role' => ['required', \Illuminate\Validation\Rule::in(['PRODUCT_OWNER','SCRUM_MASTER','DEVELOPER'])],
+            'role' => ['required', Rule::in(['PRODUCT_OWNER','SCRUM_MASTER','DEVELOPER'])],
         ]);
 
         if ($user->id === $project->owner_id) {
-            return redirect()->route('projects.show', $project)
+            return redirect()->route('projects.edit', $project)
                 ->with('error','O dono já é OWNER e não pode ter papel trocado.');
         }
 
         if (! $project->members()->where('user_id', $user->id)->exists()) {
-            return redirect()->route('projects.show', $project)
+            return redirect()->route('projects.edit', $project)
                 ->with('error','Usuário não é membro deste projeto.');
         }
 
         $project->members()->updateExistingPivot($user->id, ['role' => $data['role']]);
 
-        return redirect()->route('projects.show', $project)
+        return redirect()->route('projects.edit', $project)
             ->with('success', 'Papel atualizado.');
     }
 
+    /** Remover membro do projeto */
     public function membersDestroy(Project $project, User $user)
     {
         $this->authorizeUpdate($project);
 
         if ($user->id === $project->owner_id) {
-            return redirect()->route('projects.show', $project)
+            return redirect()->route('projects.edit', $project)
                 ->with('error','Não é possível remover o dono do projeto.');
         }
 
         $project->members()->detach($user->id);
 
-        return redirect()->route('projects.show', $project)
+        return redirect()->route('projects.edit', $project)
             ->with('success', 'Membro removido.');
     }
 
-    /* ======== Helpers simples de autorização ======== */
+    /* ======== Helpers de autorização ======== */
+
     private function authorizeView(Project $project): void
     {
         $isMember = $project->members()->where('user_id', auth()->id())->exists();
@@ -227,7 +226,7 @@ class ProjectController extends Controller
 
     private function authorizeUpdate(Project $project): void
     {
-        // apenas o dono pode editar/gerenciar membros (simples)
+        // apenas o dono pode editar/gerenciar membros
         abort_unless($project->owner_id === auth()->id(), 403);
     }
 }
