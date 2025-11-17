@@ -5,9 +5,9 @@ namespace App\Http\Controllers;
 use App\Enums\ProjectRole;
 use App\Http\Requests\StoreProjectRequest;
 use App\Models\Project;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
-use App\Models\User;
 
 class ProjectController extends Controller
 {
@@ -25,6 +25,7 @@ class ProjectController extends Controller
         return view('dashboard', compact('projects'));
     }
 
+    /** Cria projeto a partir do modal */
     public function store(StoreProjectRequest $request)
     {
         $user = $request->user();
@@ -38,22 +39,26 @@ class ProjectController extends Controller
             'fim'       => $request->fim,
         ]);
 
+        // Dono entra automaticamente na equipe como OWNER
         $project->members()->attach($user->id, ['role' => ProjectRole::OWNER->value]);
 
         return redirect()
-            ->route('projects.show', $project)
+            ->route('projects.index')
             ->with('success', 'Projeto criado com sucesso!');
     }
 
+    /** Excluir projeto */
     public function destroy(Project $project, Request $request)
     {
+        // só o dono pode apagar
         abort_unless($project->owner_id === $request->user()->id, 403);
         $project->delete();
 
         return back()->with('success', 'Projeto removido.');
     }
 
-   public function show(Project $project)
+    /** Detalhes do projeto (dashboard do projeto) */
+    public function show(Project $project)
     {
         $this->authorizeView($project);
 
@@ -61,35 +66,33 @@ class ProjectController extends Controller
             'owner',
             'members',
             'tasks' => function($q) {
-                $q->orderBy('priority', 'desc')->orderBy('due_date', 'asc')->with('assignee');
+                $q->orderBy('priority', 'desc')
+                  ->orderBy('due_date', 'asc')
+                  ->with('assignee');
             }
         ]);
-        
+
         $total      = $project->tasks->count();
         $done       = $project->tasks->where('status','DONE')->count();
         $open       = $project->tasks->where('status','OPEN')->count();
         $inprogress = $project->tasks->where('status','IN_PROGRESS')->count();
-        $test       = $project->tasks->where('status','TEST')->count();
+        $blocked    = $project->tasks->where('status','BLOCKED')->count();
 
-        $tasks = $project->tasks;
-
-        // atrasadas = qualquer tarefa com prazo no passado e não concluída
-        $overdue = $tasks
-            ->filter(fn($t) => $t->due_date && $t->due_date->isPast() && $t->status !== 'DONE')
+        $today = now()->startOfDay();
+        $overdue = $project->tasks
+            ->filter(fn($t) => $t->due_date && $t->due_date->lt($today) && $t->status !== 'DONE')
             ->count();
 
-        // próxima entrega = tarefas com prazo no futuro ou hoje (ainda não atrasadas) e não concluídas
-        $nextDue = $tasks
-            ->filter(fn($t) => $t->due_date && !$t->due_date->isPast() && $t->status !== 'DONE')
+        $nextDue = $project->tasks
+            ->filter(fn($t) => $t->due_date && $t->due_date->gte($today) && $t->status !== 'DONE')
             ->sortBy('due_date')
             ->first();
 
         $progress = $total > 0 ? round(($done / $total) * 100) : 0;
-        
-        $tasksByStatus = $project->tasks->groupBy('status');
 
-        $allStatuses = collect(['OPEN', 'IN_PROGRESS', 'TEST', 'DONE', 'OTHER_STATUS_IF_YOU_HAVE_IT']); // Adicione outros status se necessário
-        
+        // Quadro Kanban
+        $tasksByStatus = $project->tasks->groupBy('status');
+        $allStatuses = collect(['OPEN', 'IN_PROGRESS', 'BLOCKED', 'DONE']);
         $tasksByStatus = $allStatuses
             ->mapWithKeys(fn ($status) => [$status => $tasksByStatus->get($status) ?? collect()])
             ->all();
@@ -100,20 +103,26 @@ class ProjectController extends Controller
 
         return view('projects.show', compact(
             'project',
-            'total','done','open','inprogress','test','overdue','nextDue','progress',
+            'total','done','open','inprogress','blocked','overdue','nextDue','progress',
             'userRole',
-            'tasksByStatus' 
+            'tasksByStatus'
         ));
     }
 
+    /** Tela de edição / configuração do projeto */
     public function edit(Project $project)
     {
         $this->authorizeUpdate($project);
-        $users = User::orderBy('name')->get();
 
-        return view('projects.edit', compact('project', 'users'));
+        $project->load('members');
+
+        return view('projects.edit', [
+            'project'  => $project,
+            'members'  => $project->members,
+        ]);
     }
 
+    /** Salvar alterações básicas do projeto */
     public function update(Request $request, Project $project)
     {
         $this->authorizeUpdate($project);
@@ -132,86 +141,82 @@ class ProjectController extends Controller
             ->with('success', 'Projeto atualizado.');
     }
 
+    /* ======== MEMBERS ======== */
+
+    /** Adicionar membro por e-mail e papel */
     public function membersStore(Request $request, Project $project)
     {
         $this->authorizeUpdate($project);
 
-        // valida só formato do e-mail e role
+        $email = mb_strtolower(trim($request->input('email', '')));
+
         $data = $request->validate([
-            'email' => ['required','email'],
+            'email' => ['required','email','exists:users,email'],
             'role'  => ['required', Rule::in(['PRODUCT_OWNER','SCRUM_MASTER','DEVELOPER'])],
+        ], [
+            'email.exists' => 'Este e-mail não está cadastrado no sistema.',
         ]);
 
-        // normaliza e-mail para comparação
-        $email = mb_strtolower(trim($data['email']));
+        $user = User::whereRaw('LOWER(email) = ?', [$email])->firstOrFail();
 
-        // tenta achar o usuário
-        $user = User::whereRaw('LOWER(email) = ?', [$email])->first();
-
-        // se não achou, volta com mensagem de erro
-        if (! $user) {
-            return back()
-                ->withInput()
-                ->with('error', 'Este e-mail não está cadastrado no sistema.');
-        }
-
-        // não deixar cadastrar o dono novamente
         if ($user->id === $project->owner_id) {
-            return redirect()->route('projects.show', $project)
+            return redirect()->route('projects.edit', $project)
                 ->with('error', 'O dono já está no projeto como OWNER.');
         }
 
-        // evitar duplicado
         if ($project->members()->where('user_id', $user->id)->exists()) {
-            return redirect()->route('projects.show', $project)
+            return redirect()->route('projects.edit', $project)
                 ->with('error', 'Usuário já é membro deste projeto.');
         }
 
-        // adiciona membro com o papel selecionado
         $project->members()->attach($user->id, ['role' => $data['role']]);
 
-        return redirect()->route('projects.show', $project)
+        return redirect()->route('projects.edit', $project)
             ->with('success', 'Membro adicionado.');
     }
 
+    /** Atualizar papel de um membro */
     public function membersUpdate(Request $request, Project $project, User $user)
     {
         $this->authorizeUpdate($project);
 
         $data = $request->validate([
-            'role' => ['required', \Illuminate\Validation\Rule::in(['PRODUCT_OWNER','SCRUM_MASTER','DEVELOPER'])],
+            'role' => ['required', Rule::in(['PRODUCT_OWNER','SCRUM_MASTER','DEVELOPER'])],
         ]);
 
         if ($user->id === $project->owner_id) {
-            return redirect()->route('projects.show', $project)
+            return redirect()->route('projects.edit', $project)
                 ->with('error','O dono já é OWNER e não pode ter papel trocado.');
         }
 
         if (! $project->members()->where('user_id', $user->id)->exists()) {
-            return redirect()->route('projects.show', $project)
+            return redirect()->route('projects.edit', $project)
                 ->with('error','Usuário não é membro deste projeto.');
         }
 
         $project->members()->updateExistingPivot($user->id, ['role' => $data['role']]);
 
-        return redirect()->route('projects.show', $project)
+        return redirect()->route('projects.edit', $project)
             ->with('success', 'Papel atualizado.');
     }
 
+    /** Remover membro do projeto */
     public function membersDestroy(Project $project, User $user)
     {
         $this->authorizeUpdate($project);
 
         if ($user->id === $project->owner_id) {
-            return redirect()->route('projects.show', $project)
+            return redirect()->route('projects.edit', $project)
                 ->with('error','Não é possível remover o dono do projeto.');
         }
 
         $project->members()->detach($user->id);
 
-        return redirect()->route('projects.show', $project)
+        return redirect()->route('projects.edit', $project)
             ->with('success', 'Membro removido.');
     }
+
+    /* ======== Helpers de autorização ======== */
 
     private function authorizeView(Project $project): void
     {
@@ -221,6 +226,7 @@ class ProjectController extends Controller
 
     private function authorizeUpdate(Project $project): void
     {
+        // apenas o dono pode editar/gerenciar membros
         abort_unless($project->owner_id === auth()->id(), 403);
     }
 }
